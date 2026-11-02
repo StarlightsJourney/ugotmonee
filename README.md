@@ -1,70 +1,60 @@
 # ugotmonee
 
-Your bank already emails you when you spend money, and sends a statement every month. ugotmonee reads both into a Google Sheet, sorts each payment into a category, and shows where your money went.
+Automatic expense tracking for OCBC and DBS/POSB (including PayLah!) customers in Singapore.
 
-It's a Google Sheet with a script attached. There's no app to install, no account to create, and no server. Your data stays in your own Google account.
+Most expense trackers make you type in every payment, because Singapore banks don't let apps connect to personal accounts. But your bank already emails you when you pay, and sends a statement every month. ugotmonee reads both into a Google Sheet, sorts each payment into a category, and shows where your money went.
 
-It reads Singapore banks for now: OCBC and DBS/POSB, including PayLah!.
+There's no app to install, no account to create and no server. It's a Google Sheet with a script attached, and your data stays in your own Google account.
 
-## How it works
+## What you get
 
-Every 5 minutes the script searches your Gmail for bank alerts and adds each payment to the Transactions tab. When you first set it up, it reads the last 6 months.
+- **Transactions**: every payment, added within 5 minutes of the bank's email.
+- **Summary** and **Trends**: spending by category and month, your average month, and what you're on pace to spend.
+- **Recurring**: subscriptions and other regular payments, with a note when one stops.
+- **Accounts**: your balance from the last statement, plus an estimate for today.
+- **A reminder email** on the 8th of each month if last month's statement isn't in yet.
 
-Not everything sends an alert. NETS QR payments and some card payments only show up on your monthly statement. So once a month you import the statement PDF. Payments you already had from emails are matched up, not added twice. The import checks that the opening balance, minus what went out, plus what came in, equals the closing balance. If it doesn't, it tells you something was missed.
+## What you need
 
-If you change a payment's category, the sheet remembers that merchant and uses your category from then on.
+- A Google account whose Gmail receives your bank's alert emails.
+- Bank alerts turned on. In internet banking, under e-Alerts, turn on every kind: PayNow, transfers, NETS QR and card payments, with the minimum amount as low as it goes. Anything without an alert only appears once you import the statement.
+- Your monthly statement PDFs.
+- Optional: a free [Gemini API key](https://aistudio.google.com/apikey) to sort merchants the built-in list doesn't know.
 
-The Summary tab shows one month by category. The Trends tab shows the last 12 months: what came in and went out each month, your average month, what you're on pace to spend this month, top merchants, and spending by category and day of the week.
+## Setting it up
 
-The Accounts tab keeps each account's balance from its latest statement, which is exact, and an estimate of the balance now, which adds the alerts since then. On the 8th of each month the script emails you if last month's statements haven't been imported.
+About five minutes.
 
-## Categorising with Gemini (optional)
+1. Make a Google Sheet at [sheets.new](https://sheets.new) and open **Extensions → Apps Script**.
+2. In **Project Settings** (the gear), tick **Show "appsscript.json" manifest file in editor**.
+3. Copy in the three files from the [`apps-script`](apps-script) folder:
+   - `appsscript.json` replaces the editor's copy.
+   - `Code.js` replaces everything in `Code.gs`.
+   - `Import.html` goes in a new HTML file named `Import` (**+ → HTML**).
+4. Save, reload the Sheet, and click **ugotmonee → Set up**. Google says the app is unverified because you just made it: click **Advanced**, then **Go to ugotmonee**.
+5. In the **Settings** tab, type your name the way your bank writes it, such as `JANE TAN, JANE`. Transfers between your own accounts then don't count as spending.
+6. Import your statements with **ugotmonee → Import statement (PDF)**.
 
-Keyword rules know common merchants. For the rest you can let Gemini guess. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it into **ugotmonee → Categorise with Gemini…**.
+If the menu doesn't appear or you see *permission denied*, you're signed in to more than one Google account. Open the Sheet in a private window with just one.
 
-Only the names of uncategorised merchants are sent, with the payment type. Never amounts, dates or account numbers. Each merchant is asked about once, and the answer is saved in the Rules tab, where you can change it. On Gemini's free tier, Google may use what you send to improve its products. The key is kept in the script's private storage for your Google account, not in the sheet. To turn it off, open the same menu and leave the key blank.
+## Privacy
+
+- Gmail is read-only, and only mail from OCBC, DBS and PayLah! is searched.
+- Statement PDFs are read in your browser and never uploaded.
+- Gemini, if you turn it on, sees only merchant names. Never amounts, dates or account numbers.
+- The monthly reminder is sent from your account to yourself.
+
+Every permission is listed in [`appsscript.json`](apps-script/appsscript.json). To stop it, delete the trigger under **Extensions → Apps Script → Triggers**, or remove its access at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
 ## What it can't see
 
 - Cash.
-- What you spend inside other wallets like GrabPay. You'll see the top-up, not the purchases.
-- Card payments, until the statement arrives, unless you turn on card alerts. In OCBC Internet Banking, go to Customer Service, then Manage e-Alerts, and set card alerts to $0.
+- Purchases inside other wallets like GrabPay. You'll see the top-up only.
+- Payments your alert settings leave out, until you import the statement.
 
-## Setting it up
+## How well it works
 
-You need a Google account that receives your bank alerts in Gmail. Setup takes about five minutes.
-
-1. Make a new Google Sheet at [sheets.new](https://sheets.new).
-2. Open **Extensions → Apps Script**.
-3. Click the gear icon (Project Settings) and tick **Show "appsscript.json" manifest file in editor**.
-4. Back in the editor, copy three files from the [`apps-script`](apps-script) folder:
-   - `appsscript.json`: replace what's in the editor's copy.
-   - `Code.js`: replace everything in `Code.gs`.
-   - `Import.html`: add an HTML file named `Import` with **+ → HTML**, and paste it in.
-5. Save. Go back to the sheet and reload it. A **ugotmonee** menu appears.
-6. Click **ugotmonee → Set up**. Google asks you to allow access. It warns that the app isn't verified, because it's a script you just made yourself. Click **Advanced**, then **Go to ugotmonee**.
-7. In the Settings tab, type the names your bank uses for you, such as `JANE TAN, JANE`. Payments between your own accounts then aren't counted as spending.
-
-To import a statement, download the PDF from your bank and click **ugotmonee → Import statement (PDF)**.
-
-## What it has access to
-
-The script asks for these permissions, all listed in `appsscript.json`:
-
-- read your Gmail (read-only: it can't delete or change anything)
-- edit this one spreadsheet
-- run itself every 5 minutes, and monthly for the reminder
-- show its menu and import window
-- send email as you, and see your address: only to email you the monthly reminder
-- connect to an external service: only Gemini, and only if you give it a key
-
-It searches Gmail only for mail from `ocbc.com`, `dbs.com` and PayLah!.
-
-Statement PDFs are read in your browser by [pdf.js](https://mozilla.github.io/pdf.js/). It loads from cdnjs, pinned to one version and checked against a hash. The PDF itself isn't uploaded anywhere. Only the lines of text go to your script, which runs on Google's servers like any Apps Script.
-
-The code is short. Read `apps-script/Code.js` before you paste it in. That file is built from `src/`.
-
-To stop it, open **Extensions → Apps Script → Triggers** and delete the trigger. To remove its access, go to [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+[The report](docs/report/report.tex) measures it on real accounts. With the alerts that were on at the time, emails showed 51% of the money spent but only 27% of the payments. Turning on every kind of alert closes most of that gap. Build the PDF with `tectonic -X compile docs/report/report.tex`.
 
 ## Working on it
 
@@ -75,7 +65,7 @@ pnpm typecheck
 pnpm build
 ```
 
-`pnpm build` writes `apps-script/` from `src/`. To push straight to your own sheet instead of copy-pasting, use [clasp](https://github.com/google/clasp). First turn on the Apps Script API at [script.google.com/home/usersettings](https://script.google.com/home/usersettings), then:
+`pnpm build` writes `apps-script/` from `src/`. To push to your own Sheet instead of copy-pasting, turn on the Apps Script API at [script.google.com/home/usersettings](https://script.google.com/home/usersettings), then:
 
 ```bash
 pnpm dlx @google/clasp@3 login
@@ -83,15 +73,9 @@ pnpm dlx @google/clasp@3 create --type sheets --title ugotmonee --rootDir apps-s
 pnpm push
 ```
 
-To check a statement parser against a real PDF without committing it:
+To check a parser against a real statement without committing it, run `pnpm check-statement ~/Downloads/statement.pdf`. It prints only whether the totals add up.
 
-```bash
-pnpm check-statement ~/Downloads/statement.pdf
-```
-
-It prints only whether the totals add up. Add `--show` to list the transactions on your screen.
-
-To add a bank, write a parser in `src/lib/parsers/` for its alert emails or `src/lib/statements/` for its statements, and add a test with every name, account number and reference replaced by fake ones. `pnpm install` turns on git hooks that block secrets, personal data, statement files, and AI agents credited as authors.
+To add a bank or email format, start from a real example with every name, account number and reference replaced by fake ones, and add it as a test. [AGENTS.md](AGENTS.md) has the full rules. `pnpm install` turns on git hooks that block secrets, personal data and statement files.
 
 ## Licence
 
