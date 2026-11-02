@@ -92,3 +92,7 @@ pnpm check-statement ~/Downloads/statement.pdf
 It prints only whether the totals add up. Add `--show` to list the transactions on your screen.
 
 To add a bank, write a parser in `src/lib/parsers/` for its alert emails or `src/lib/statements/` for its statements, and add a test with every name, account number and reference replaced by fake ones. `pnpm install` turns on git hooks that block secrets, personal data, statement files, and AI agents credited as authors.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
