@@ -1,0 +1,5 @@
+#!/bin/sh
+. "$(git rev-parse --show-toplevel)/.githooks/lib.sh"
+FAILED=0
+check_message "$1"
+exit $FAILED

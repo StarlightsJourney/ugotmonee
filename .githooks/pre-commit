@@ -1,0 +1,15 @@
+#!/bin/sh
+. "$(git rev-parse --show-toplevel)/.githooks/lib.sh"
+FAILED=0
+
+check_ident "$(git var GIT_AUTHOR_IDENT | sed 's/>.*/>/')" "author"
+check_ident "$(git var GIT_COMMITTER_IDENT | sed 's/>.*/>/')" "committer"
+
+tmp=$(mktemp)
+git diff --cached --name-only --diff-filter=ACMR > "$tmp"
+check_files "$tmp"
+git diff --cached -U0 --diff-filter=ACMR -- . "$SCAN_EXCLUDE" > "$tmp"
+check_added_lines "$tmp"
+rm -f "$tmp"
+
+exit $FAILED

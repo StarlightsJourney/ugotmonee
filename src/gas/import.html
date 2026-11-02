@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #202124; }
+      p { margin: 0 0 12px; color: #5f6368; }
+      #log div { margin: 8px 0; }
+      .err { color: #c5221f; }
+    </style>
+    <!-- pdf.js, pinned and integrity-checked. It runs here in your browser; the PDF is never uploaded. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js" integrity="sha512-BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  </head>
+  <body>
+    <p>Pick OCBC or DBS/POSB statement PDFs. They're read in your browser and only the transactions are saved to this sheet. Importing the same statement twice adds nothing.</p>
+    <input type="file" id="files" accept="application/pdf" multiple />
+    <div id="log"></div>
+    <script>/*CLIENT*/</script>
+  </body>
+</html>

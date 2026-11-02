@@ -1,0 +1,16 @@
+#!/bin/sh
+# Catches commits made with --no-verify before they leave the machine.
+. "$(git rev-parse --show-toplevel)/.githooks/lib.sh"
+FAILED=0
+zero=0000000000000000000000000000000000000000
+
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" = "$zero" ]; then
+    check_commits "$local_sha" --not --remotes
+  else
+    check_commits "$remote_sha..$local_sha"
+  fi
+done
+
+exit $FAILED

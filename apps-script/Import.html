@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #202124; }
+      p { margin: 0 0 12px; color: #5f6368; }
+      #log div { margin: 8px 0; }
+      .err { color: #c5221f; }
+    </style>
+    <!-- pdf.js, pinned and integrity-checked. It runs here in your browser; the PDF is never uploaded. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js" integrity="sha512-BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  </head>
+  <body>
+    <p>Pick OCBC or DBS/POSB statement PDFs. They're read in your browser and only the transactions are saved to this sheet. Importing the same statement twice adds nothing.</p>
+    <input type="file" id="files" accept="application/pdf" multiple />
+    <div id="log"></div>
+    <script>"use strict";(()=>{function m(a){let r=[];for(let t of a){if(!t.str.trim())continue;let e=r.find(s=>Math.abs(s.y-t.y)<2.5);e||r.push(e={y:t.y,items:[]}),e.items.push(t)}return r.sort((t,e)=>e.y-t.y),r.map(t=>{t.items.sort((n,i)=>n.x-i.x);let e="",s=-1/0;for(let n of t.items){let i=n.x-s;if(i>4*.3){let c=Math.max(Math.round(n.x/4)-e.length,i>6?2:1);e+=" ".repeat(c)}e+=n.str,s=n.x+n.width}return e.trimEnd()})}function o(a,r=!1){let t=document.createElement("div");t.textContent=a,r&&(t.className="err"),document.getElementById("log").appendChild(t)}async function d(a){let r=pdfjsLib.getDocument({data:new Uint8Array(await a.arrayBuffer())});r.onPassword=s=>{let n=prompt(`${a.name} has a password. Enter it to read the file (it isn't saved):`);n===null?r.destroy():s(n)};let t=await r.promise,e=[];for(let s=1;s<=t.numPages;s++){let{items:n}=await(await t.getPage(s)).getTextContent();e.push(...m(n.filter(i=>"str"in i).map(i=>({str:i.str,x:i.transform[4],y:i.transform[5],width:i.width}))))}return e}function f(a,r){return new Promise((t,e)=>google.script.run.withSuccessHandler(t).withFailureHandler(e).importStatement(a,r))}document.getElementById("files").addEventListener("change",async a=>{var t,e;let r=a.target;for(let s of Array.from((t=r.files)!=null?t:[])){o(`Reading ${s.name}\u2026`);try{o(await f(s.name,await d(s)))}catch(n){o((e=n==null?void 0:n.message)!=null?e:String(n),!0)}}r.value=""});})();</script>
+  </body>
+</html>

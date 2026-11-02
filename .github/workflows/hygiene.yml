@@ -1,0 +1,53 @@
+# Server-side copy of .githooks, since local hooks can be skipped with --no-verify.
+name: hygiene
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No agent attribution, secrets or personal data
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          . .githooks/lib.sh
+          FAILED=0
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            range="HEAD"; diffbase=$(git hash-object -t tree /dev/null)
+          else
+            range="$BASE..HEAD"; diffbase="$BASE"
+          fi
+          check_commits $range
+          printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" > /tmp/pr.txt
+          check_message /tmp/pr.txt
+          git diff --name-only --diff-filter=ACMR "$diffbase" HEAD > /tmp/files.txt
+          check_files /tmp/files.txt
+          git diff -U0 --diff-filter=ACMR "$diffbase" HEAD -- . "$SCAN_EXCLUDE" > /tmp/diff.txt
+          check_added_lines /tmp/diff.txt
+          exit $FAILED
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: apps-script/ matches src/
+        run: pnpm build && git diff --exit-code apps-script
