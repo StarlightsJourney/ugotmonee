@@ -48,12 +48,12 @@
 \begin{center}\textbf{Abstract}\end{center}
 \vspace{-6pt}
 \begin{quote}
-Most expense trackers in Singapore are manual, because banks don't let personal customers connect apps to their accounts. But banks do send an email for some payments and a statement each month. I built ugotmonee, a free tracker that uses only those two, inside the user's own Google Sheet. It works, with one catch. Over five months of one person's accounts, the emails showed 51\% of the money spent but only 27\% of the payments. The rest, mostly small card and NETS QR payments, appeared only on the monthly statement. This report explains how to set the tracker up, why the emails miss so much, how the two sources are combined, and the problems I hit along the way.
+Most expense trackers in Singapore are manual, because banks don't give apps an open way to read personal transactions. But banks do send an email for some payments and a statement each month. I built ugotmonee, a free tracker that uses only those two, inside the user's own Google Sheet. It works, with one catch. Over five months of one person's accounts, the emails showed 51\% of the money spent but only 27\% of the payments. The rest, mostly small card and NETS QR payments, appeared only on the monthly statement. This report explains how to set the tracker up, why the emails miss so much, how the two sources are combined, and the problems I hit along the way.
 \end{quote}
 
 \section{Motivation}
 
-There are two usual ways to track spending. One is to connect an app to your bank. In Singapore, banks don't offer this for personal accounts. The other is to type every payment in yourself, which few people keep up.
+There are two usual ways to track spending. One is to connect an app to your bank. In Singapore that is limited, as the next section shows. The other is to type every payment in yourself, which few people keep up.
 
 But your bank already sends you two records of your spending:
 \begin{itemize}
@@ -61,6 +61,30 @@ But your bank already sends you two records of your spending:
   \item \textbf{A statement}, once a month, listing every payment.
 \end{itemize}
 ugotmonee reads both and puts every payment into a Google Sheet. It sorts them into categories, draws charts, estimates your balance, and lists your subscriptions. There is no app to install, no account to create, and your data stays in your own Google account.
+
+\Needspace{22\baselineskip}
+\section{What already exists}
+
+Table~\ref{tab:others} lists what we found in November 2026, and what each is missing.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}L@{}}
+\toprule
+\textbf{Kind} & \textbf{What's missing} \\
+\midrule
+Your bank's own planner (DBS NAV Planner, OCBC Financial OneView) & Sees only that bank's accounts. \\
+SGFinDex & Gives balances and holdings, not a list of payments. \\
+Multi-bank apps (Dobin, MySprout, Spendee) & Ask for your bank login or a paid plan. Seedly shut down at the end of 2025. \\
+Email-forwarding services (Graiden) & Your bank emails are read on someone else's servers. \\
+Open-source projects~\cite{lanbau,legitaxes,gmailpaylah,openexpense} & Each covers part of it: PayLah! or DBS emails only, or exports done by hand. None also reads OCBC or checks against statements. \\
+\bottomrule
+\end{tabularx}
+\caption{Existing ways to track spending in Singapore~\cite{sprout,seedly,traceipt,graiden}. Based on the products' own pages and reviews, which may change.}
+\label{tab:others}
+\end{table}
+
+The closest is lanbau/spend-tracker~\cite{lanbau}, which also runs on Apps Script and Gmail but reads only PayLah!. None we found reads both OCBC and DBS/POSB, combines emails with statements, and keeps everything in the user's own Google account.
 
 \section{Setting it up}
 
@@ -71,7 +95,7 @@ Table~\ref{tab:need} lists what you need.
 \begin{tabularx}{\linewidth}{@{}>{\bfseries}p{3.4cm}L@{}}
 \toprule
 A Google account & Its Gmail must receive your bank's email alerts. Google Sheets is free with it. \\
-Bank email alerts & Turned on in your bank's internet banking, under e-Alerts. Turn on every kind: PayNow, transfers, card payments (set the minimum amount as low as it goes) and NETS QR. \\
+Bank email alerts & Turned on in your bank's internet banking, under e-Alerts. Turn on every kind, and set card alerts to the lowest amount. \\
 Your statements & The monthly PDFs from internet banking. OCBC and DBS/POSB are supported. \\
 Gemini key & Optional. Only if you want AI to sort merchants the tracker doesn't recognise. Free from Google AI Studio. \\
 \bottomrule
@@ -128,7 +152,7 @@ Overall, emails showed 51\% of the money but only 27\% of the payments. The miss
 \textbf{Kind of payment} & \textbf{Payments} & \textbf{Money} & \textbf{Why there was no email} \\
 \midrule
 Card & 235 & 71\% & Card alerts only go out above a minimum amount you choose. Bus and train fares are also charged in batches days later. \\
-NETS QR & 120 & 27\% & NETS QR alerts are a separate setting, which seems to have been off. \\
+NETS QR & 120 & 27\% & Paid with the OCBC app, which offers no email alert for NETS QR. \\
 Other & 3 & 2\% & Bank fees and a few transfers. \\
 \bottomrule
 \end{tabularx}
@@ -174,6 +198,8 @@ Figure~\ref{fig:flow} shows the parts. Everything runs inside your Google accoun
 
 \textbf{Subscriptions.} The Recurring tab lists payments of about the same amount at a steady interval, like a phone plan, plus known services like streaming. If one stops appearing, it asks whether you cancelled it.
 
+\textbf{Adding a payment by hand.} For a payment that sent no email, you type the date, what you bought and the amount into a new row. It counts straight away. When the statement arrives, a line with the same amount within three days is matched to your row instead of being added again.
+
 \textbf{Categories.} Each payment gets a category from a built-in list of shops. Change a category once and the tracker remembers it for that shop. Optionally, Gemini sorts shops the list doesn't know. It sees only the shop's name, never amounts, dates or account numbers.
 
 \Needspace{26\baselineskip}
@@ -207,11 +233,22 @@ Your payments never leave your Google account, unless you turn on Gemini, which 
 
 \section{What's next}
 
-This is a first version. Right after this study I turned on card alerts at the lowest amount and switched on NETS QR alerts. The tracker already reads both kinds of email, so from November most of the card and NETS QR payments that used to appear only on statements should arrive by email within minutes instead of a month later. The next version of this report will measure how much that closes the gap.
+This is a first version. Right after this study I set card alerts to the lowest amount, so from November card payments should arrive by email within minutes instead of a month later. NETS QR depends on how you pay. With the OCBC app it can't be fixed: OCBC offers no email alert for it, so it waits for the statement. With DBS PayLah!, every payment sends an email, NETS QR included. So someone with only OCBC should pay by PayNow where the QR code allows; someone with DBS/POSB can scan with PayLah!. The next version of this report will measure how much that closes the gap.
 
 \section{Limitations}
 
 I tested one person's accounts at two banks. Other banks will send emails the tracker hasn't seen yet, and these will land in the Unrecognised tab. Payments your alert settings leave out only appear when you import the statement. E-wallet balances aren't tracked, which is fine as long as you keep the wallet empty.
+
+\begin{thebibliography}{9}\small
+\bibitem{sprout} MySprout. Expense tracker apps in Singapore: which banks sync? \url{https://mysprout.ai/blog/expense-tracker-apps-singapore-bank-sync}
+\bibitem{seedly} Seedly. Best expense tracker apps in Singapore. \url{https://blog.seedly.sg/expense-tracker-apps/}
+\bibitem{traceipt} Traceipt. What is SGFinDex? \url{https://traceipt.co/blog/what-is-sgfindex-singapore}
+\bibitem{graiden} Graiden. Expense tracking in Singapore. \url{https://www.graiden.xyz/singapore}
+\bibitem{lanbau} lanbau/spend-tracker. \url{https://github.com/lanbau/spend-tracker}
+\bibitem{legitaxes} legitaxes/expense-tracker. \url{https://github.com/legitaxes/expense-tracker}
+\bibitem{gmailpaylah} MarkHershey/gmail-paylah. \url{https://github.com/MarkHershey/gmail-paylah}
+\bibitem{openexpense} pebblepaw/OpenExpense. \url{https://github.com/pebblepaw/OpenExpense}
+\end{thebibliography}
 
 \clearpage
 \appendix

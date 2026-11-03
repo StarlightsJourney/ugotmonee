@@ -2,7 +2,7 @@
 
 Automatic expense tracking for OCBC and DBS/POSB (including PayLah!) customers in Singapore.
 
-Most expense trackers make you type in every payment, because Singapore banks don't let apps connect to personal accounts. But your bank already emails you when you pay, and sends a statement every month. ugotmonee reads both into a Google Sheet, sorts each payment into a category, and shows where your money went.
+Most expense trackers make you type in every payment, because Singapore banks don't give apps an open way to read your transactions. The ones that link to your bank cover one bank, ask for your bank login, or charge for it. But your bank already emails you when you pay, and sends a statement every month. ugotmonee reads both into a Google Sheet, sorts each payment into a category, and shows where your money went.
 
 There's no app to install, no account to create and no server. It's a Google Sheet with a script attached, and your data stays in your own Google account.
 
@@ -17,7 +17,7 @@ There's no app to install, no account to create and no server. It's a Google She
 ## What you need
 
 - A Google account whose Gmail receives your bank's alert emails.
-- Bank alerts turned on. In internet banking, under e-Alerts, turn on every kind: PayNow, transfers, NETS QR and card payments, with the minimum amount as low as it goes. Anything without an alert only appears once you import the statement.
+- Bank alerts turned on. In internet banking, under e-Alerts, turn on every kind, and set card alerts to the lowest amount.
 - Your monthly statement PDFs.
 - Optional: a free [Gemini API key](https://aistudio.google.com/apikey) to sort merchants the built-in list doesn't know.
 
@@ -37,6 +37,10 @@ About five minutes.
 
 If the menu doesn't appear or you see *permission denied*, you're signed in to more than one Google account. Open the Sheet in a private window with just one.
 
+## Adding a payment by hand
+
+For a payment that sent no email, such as NETS QR with the OCBC app, type it into a new row at the bottom of **Transactions**: the date, what you bought, and the amount. The rest fills itself in, and it counts straight away. When that month's statement is imported, the same amount within 3 days is matched to your row instead of being added again. Type `in` under Direction for money you received.
+
 ## Privacy
 
 - Gmail is read-only, and only mail from OCBC, DBS and PayLah! is searched.
@@ -51,6 +55,19 @@ Every permission is listed in [`appsscript.json`](apps-script/appsscript.json). 
 - Cash.
 - Purchases inside other wallets like GrabPay. You'll see the top-up only.
 - Payments your alert settings leave out, until you import the statement.
+- **NETS QR paid with the OCBC app**, until you import the statement. OCBC doesn't offer an email alert for it. If you also bank with DBS/POSB, scan with PayLah! instead: every PayLah! payment, NETS QR included, sends an email. With OCBC only, paying by PayNow where the QR code allows it also sends one.
+
+## Other solutions
+
+Before building this we looked at what exists, as of November 2026:
+
+- **Your bank's own planner** (DBS NAV Planner, OCBC Financial OneView) sees transactions automatically, but only that bank's.
+- **SGFinDex** links banks, CPF and insurers, but gives balances and holdings, not a list of payments.
+- **Multi-bank apps** such as Dobin, MySprout and Spendee can link DBS and OCBC, but ask for your bank login or a paid plan. Seedly, a popular one, shut down at the end of 2025.
+- **Email-forwarding services** such as Graiden read your bank alerts, but on their servers.
+- **Open-source projects** come closest. [lanbau/spend-tracker](https://github.com/lanbau/spend-tracker) also uses Apps Script and Gmail but reads PayLah! only. Others read DBS alerts into a self-hosted app ([legitaxes/expense-tracker](https://github.com/legitaxes/expense-tracker)), export PayLah! emails to CSV ([MarkHershey/gmail-paylah](https://github.com/MarkHershey/gmail-paylah)), or work from bank exports ([pebblepaw/OpenExpense](https://github.com/pebblepaw/OpenExpense)).
+
+None we found read both OCBC and DBS/POSB, combine the emails with the statements, and keep everything in your own Google account. That's the gap this fills.
 
 ## How well it works
 

@@ -628,3 +628,24 @@ describe("start date, money in, and review", () => {
     expect(sheets.get("Rules")!.cells.find((r) => r[0] === "LIU STALL")!.slice(1, 3)).toEqual(["Food & Drinks", "you"]);
   });
 });
+
+describe("payments you type in yourself", () => {
+  it("fills in a typed row, and the statement later confirms it instead of adding it twice", () => {
+    setup();
+    const tx = sheets.get("Transactions")!;
+    const r: unknown[] = [];
+    r[0] = new Date("2026-09-20T12:00:00+08:00");
+    r[1] = "iced milo";
+    r[2] = 1.1;
+    tx.cells.push(r);
+    const row = tx.cells.length;
+    onEdit({ range: tx.getRange(row, 3), value: 1.1 } as never);
+    expect(tx.cells[row - 1].slice(3, 6)).toEqual(["SGD", "out", "Uncategorised"]);
+    expect(tx.cells[row - 1][9]).toBe("manual");
+
+    expect(importStatement("sep.pdf", ocbcSep())).toMatch(/1 added, 1 matched/);
+    const milo = tx.cells.find((x) => x[1] === "iced milo")!;
+    expect([milo[9], milo[6]]).toEqual(["both", "OCBC FRANK Account (-000001)"]);
+    expect(tx.cells.some((x) => x[1] === "DRINK STALL GARDENS")).toBe(false);
+  });
+});

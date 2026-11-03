@@ -1115,20 +1115,27 @@ var ugotmonee = (() => {
     const keys = new Set(rows.flatMap((r) => [r[C.Key], r[C["Statement key"]]]).filter(Boolean).map(String));
     return { sheet, rows, keys };
   }
-  function candidates(rows, source) {
+  function candidates(rows, sources) {
     const out = [];
     rows.forEach((r, id) => {
-      if (r[C.Source] !== source) return;
+      if (!sources.includes(String(r[C.Source])) || !(r[C.Date] instanceof Date)) return;
       out.push({
         id,
         at: r[C.Date].getTime(),
         amountCents: Math.round(Number(r[C.Amount]) * 100),
-        direction: r[C.Direction] === "out" ? "debit" : "credit",
-        merchantKey: String(r[C["Merchant key"]]),
+        direction: r[C.Direction] === "in" ? "credit" : "debit",
+        merchantKey: String(r[C["Merchant key"]]) || normaliseMerchant(String(r[C.Merchant])),
         account: String(r[C.Account])
       });
     });
     return out;
+  }
+  function matchManual(t, rows, other, used) {
+    const at = Date.parse(t.occurredAt);
+    const fits = other.filter(
+      (c) => rows[c.id][C.Source] === "manual" && !used.has(c.id) && c.amountCents === t.amountCents && c.direction === t.direction && Math.abs(c.at - at) <= 3 * DAY3
+    );
+    return fits.length === 1 ? fits[0] : null;
   }
   function toRow(e, category, origin) {
     var _a, _b, _c;
@@ -1152,10 +1159,10 @@ var ugotmonee = (() => {
     return row;
   }
   function record(entries, origin) {
-    var _a, _b;
+    var _a, _b, _c;
     const { sheet, rows, keys } = loadTransactions();
     const { userRules, ownNames, allowanceNames, startDate } = context();
-    const other = candidates(rows, origin === "email" ? "statement" : "email");
+    const other = candidates(rows, origin === "email" ? ["statement"] : ["email", "manual"]);
     const cat = (t) => withReversal(t, categorise(t, userRules, ownNames, allowanceNames), userRules, [...rows, ...added]);
     const used = /* @__PURE__ */ new Set();
     const added = [];
@@ -1169,18 +1176,18 @@ var ugotmonee = (() => {
       if (startDate && Date.parse(e.txn.occurredAt) < startDate.getTime()) continue;
       keys.add(e.key);
       const t = e.txn;
-      const m = findMatch(
+      const m = (_a = findMatch(
         { at: Date.parse(t.occurredAt), amountCents: t.amountCents, direction: t.direction, merchantKey: normaliseMerchant(t.merchant), account: t.account },
         other,
         used
-      );
+      )) != null ? _a : origin === "statement" ? matchManual(t, rows, other, used) : null;
       if (m) {
         used.add(m.id);
         const row = rows[m.id];
         row[C.Source] = "both";
         if (origin === "email") {
           row[C.Date] = new Date(t.occurredAt);
-          row[C.Reference] = (_a = t.reference) != null ? _a : "";
+          row[C.Reference] = (_b = t.reference) != null ? _b : "";
           row[C.Key] = e.key;
           if (isGeneric(String(row[C["Merchant key"]]))) {
             row[C.Merchant] = t.merchant;
@@ -1188,7 +1195,8 @@ var ugotmonee = (() => {
             row[C.Category] = cat(t);
           }
         } else {
-          row[C["Statement key"]] = (_b = e.stmtKey) != null ? _b : "";
+          row[C["Statement key"]] = (_c = e.stmtKey) != null ? _c : "";
+          if (!row[C.Account]) row[C.Account] = t.account;
         }
         matched++;
         continue;
@@ -1538,6 +1546,7 @@ var ugotmonee = (() => {
     const sheet = range.getSheet();
     if (sheet.getName() === SETTINGS && range.getColumn() === 2 && (range.getRow() === 2 || range.getRow() === 7)) return markOwnTransfers();
     if (sheet.getName() === REVIEW && range.getRow() >= 2 && range.getNumRows() === 1) return reviewEdited(range.getRow(), range.getColumn(), String((_a = e.value) != null ? _a : "").trim());
+    if (sheet.getName() === TX && range.getRow() >= 2 && range.getNumRows() === 1) completeManualRow(sheet, range.getRow());
     if (sheet.getName() !== TX || range.getColumn() !== C.Category + 1 || range.getNumRows() !== 1 || range.getRow() < 2) return;
     const category = String((_b = e.value) != null ? _b : "").trim();
     const key = String(sheet.getRange(range.getRow(), C["Merchant key"] + 1).getValue());
@@ -1545,6 +1554,21 @@ var ugotmonee = (() => {
     const learned = /* @__PURE__ */ new Map([[key, category]]);
     saveRules(learned, "you");
     fillCategories(learned);
+  }
+  function completeManualRow(sheet, row) {
+    const r = sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0];
+    if (r[C.Source] || !(r[C.Date] instanceof Date) || !r[C.Merchant] || !(Number(r[C.Amount]) > 0)) return;
+    const { userRules, ownNames, allowanceNames } = context();
+    r[C.Direction] = r[C.Direction] === "in" ? "in" : "out";
+    r[C.Currency] = r[C.Currency] || "SGD";
+    r[C.Type] = r[C.Type] || "manual";
+    r[C.Source] = "manual";
+    r[C["Merchant key"]] = normaliseMerchant(String(r[C.Merchant]));
+    if (!r[C.Category]) {
+      const t = { merchant: String(r[C.Merchant]), description: String(r[C.Description]) || null, payeeType: "unknown", kind: "other" };
+      r[C.Category] = categorise({ ...t, direction: r[C.Direction] === "in" ? "credit" : "debit" }, userRules, ownNames, allowanceNames);
+    }
+    sheet.getRange(row, 1, 1, HEADERS.length).setValues([r]);
   }
   function markOwnTransfers() {
     const { ownNames, allowanceNames } = context();

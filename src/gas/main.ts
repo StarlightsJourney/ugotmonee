@@ -408,20 +408,32 @@ function loadTransactions() {
   return { sheet, rows, keys };
 }
 
-function candidates(rows: Row[], source: Origin): Candidate[] {
+function candidates(rows: Row[], sources: string[]): Candidate[] {
   const out: Candidate[] = [];
   rows.forEach((r, id) => {
-    if (r[C.Source] !== source) return;
+    if (!sources.includes(String(r[C.Source])) || !(r[C.Date] instanceof Date)) return;
     out.push({
       id,
       at: (r[C.Date] as Date).getTime(),
       amountCents: Math.round(Number(r[C.Amount]) * 100),
-      direction: r[C.Direction] === "out" ? "debit" : "credit",
-      merchantKey: String(r[C["Merchant key"]]),
+      direction: r[C.Direction] === "in" ? "credit" : "debit",
+      merchantKey: String(r[C["Merchant key"]]) || normaliseMerchant(String(r[C.Merchant])),
       account: String(r[C.Account]),
     });
   });
   return out;
+}
+
+/**
+ * A payment you typed in yourself names the merchant your way ("chicken rice"), not the
+ * statement's, so match it on amount and date alone, but only when exactly one fits.
+ */
+function matchManual(t: ParsedTxn, rows: Row[], other: Candidate[], used: Set<number>) {
+  const at = Date.parse(t.occurredAt);
+  const fits = other.filter(
+    (c) => rows[c.id][C.Source] === "manual" && !used.has(c.id) && c.amountCents === t.amountCents && c.direction === t.direction && Math.abs(c.at - at) <= 3 * DAY,
+  );
+  return fits.length === 1 ? fits[0] : null;
 }
 
 function toRow(e: Entry, category: string, origin: Origin): Row {
@@ -452,7 +464,8 @@ function toRow(e: Entry, category: string, origin: Origin): Row {
 function record(entries: Entry[], origin: Origin) {
   const { sheet, rows, keys } = loadTransactions();
   const { userRules, ownNames, allowanceNames, startDate } = context();
-  const other = candidates(rows, origin === "email" ? "statement" : "email");
+  // A statement line can confirm an email alert or a payment you typed in
+  const other = candidates(rows, origin === "email" ? ["statement"] : ["email", "manual"]);
   const cat = (t: ParsedTxn) => withReversal(t, categorise(t, userRules, ownNames, allowanceNames), userRules, [...rows, ...added]);
   const used = new Set<number>();
   const added: Row[] = [];
@@ -471,7 +484,7 @@ function record(entries: Entry[], origin: Origin) {
       { at: Date.parse(t.occurredAt), amountCents: t.amountCents, direction: t.direction, merchantKey: normaliseMerchant(t.merchant), account: t.account },
       other,
       used,
-    );
+    ) ?? (origin === "statement" ? matchManual(t, rows, other, used) : null);
     if (m) {
       used.add(m.id);
       const row = rows[m.id];
@@ -489,6 +502,7 @@ function record(entries: Entry[], origin: Origin) {
         }
       } else {
         row[C["Statement key"]] = e.stmtKey ?? "";
+        if (!row[C.Account]) row[C.Account] = t.account;
       }
       matched++;
       continue;
@@ -934,6 +948,7 @@ export function onEdit(e: GoogleAppsScript.Events.SheetsOnEdit) {
   const sheet = range.getSheet();
   if (sheet.getName() === SETTINGS && range.getColumn() === 2 && (range.getRow() === 2 || range.getRow() === 7)) return markOwnTransfers();
   if (sheet.getName() === REVIEW && range.getRow() >= 2 && range.getNumRows() === 1) return reviewEdited(range.getRow(), range.getColumn(), String(e.value ?? "").trim());
+  if (sheet.getName() === TX && range.getRow() >= 2 && range.getNumRows() === 1) completeManualRow(sheet, range.getRow());
   if (sheet.getName() !== TX || range.getColumn() !== C.Category + 1 || range.getNumRows() !== 1 || range.getRow() < 2) return;
   const category = String(e.value ?? "").trim();
   const key = String(sheet.getRange(range.getRow(), C["Merchant key"] + 1).getValue());
@@ -942,6 +957,27 @@ export function onEdit(e: GoogleAppsScript.Events.SheetsOnEdit) {
   const learned = new Map([[key, category]]);
   saveRules(learned, "you");
   fillCategories(learned);
+}
+
+/**
+ * A payment you typed into Transactions yourself, say a NETS QR payment that sent no email.
+ * Once it has a date, merchant and amount, fill in the rest so it counts like any other row,
+ * and so importing the statement later matches it instead of adding it again.
+ */
+function completeManualRow(sheet: GoogleAppsScript.Spreadsheet.Sheet, row: number) {
+  const r = sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0];
+  if (r[C.Source] || !(r[C.Date] instanceof Date) || !r[C.Merchant] || !(Number(r[C.Amount]) > 0)) return;
+  const { userRules, ownNames, allowanceNames } = context();
+  r[C.Direction] = r[C.Direction] === "in" ? "in" : "out";
+  r[C.Currency] = r[C.Currency] || "SGD";
+  r[C.Type] = r[C.Type] || "manual";
+  r[C.Source] = "manual";
+  r[C["Merchant key"]] = normaliseMerchant(String(r[C.Merchant]));
+  if (!r[C.Category]) {
+    const t = { merchant: String(r[C.Merchant]), description: String(r[C.Description]) || null, payeeType: "unknown" as const, kind: "other" as const };
+    r[C.Category] = categorise({ ...t, direction: r[C.Direction] === "in" ? "credit" : "debit" }, userRules, ownNames, allowanceNames);
+  }
+  sheet.getRange(row, 1, 1, HEADERS.length).setValues([r]);
 }
 
 /**
