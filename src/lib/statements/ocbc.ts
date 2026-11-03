@@ -41,6 +41,17 @@ function describe(type: string, lines: string[]) {
   return { merchant: named ?? type, kind: "other" as const, payeeType: "unknown" as const };
 }
 
+/**
+ * Statement lines carry no year. A month up to the period's end is the end's year, except
+ * December on a January statement. The month right after the end is a credit posted on the 1st
+ * (interest on 01 AUG for a July statement): still the same year, or the next one after December.
+ */
+export function lineYear(mon: number, endMonth: number, endYear: number) {
+  if (endMonth === 12 && mon === 1) return endYear + 1;
+  if (endMonth === 1 && mon === 12) return endYear - 1;
+  return mon > endMonth + 1 ? endYear - 1 : endYear;
+}
+
 export function parseOcbcStatement(lines: string[]): Statement | null {
   if (!lines.some((l) => /STATEMENT OF ACCOUNT/i.test(l)) || !lines.some((l) => /OCBC/.test(l))) return null;
 
@@ -66,7 +77,7 @@ export function parseOcbcStatement(lines: string[]): Statement | null {
     const o = open;
     open = null;
     const d = describe(o.type, o.lines);
-    const year = o.mon > endMonth ? endYear - 1 : endYear;
+    const year = lineYear(o.mon, endMonth, endYear);
     const when = "bought" in d && d.bought ? d.bought : { d: o.day, m: o.mon, y: year };
     const posted = toSgtIso(year, o.mon, o.day).slice(0, 10);
     txns.push({

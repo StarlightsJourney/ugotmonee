@@ -26,6 +26,7 @@ var ugotmonee = (() => {
     onEdit: () => onEdit,
     onOpen: () => onOpen,
     remindStatements: () => remindStatements,
+    reviewMerchants: () => reviewMerchants,
     setGeminiKey: () => setGeminiKey,
     setup: () => setup,
     showImport: () => showImport,
@@ -36,8 +37,6 @@ var ugotmonee = (() => {
 
   // src/lib/categorise.ts
   var DEFAULT_CATEGORIES = [
-    "Own transfers",
-    "Income",
     "Food & Drinks",
     "Groceries",
     "Transport",
@@ -50,8 +49,20 @@ var ugotmonee = (() => {
     "Gifts",
     "Transfers",
     "Cash",
-    "Uncategorised"
+    "Uncategorised",
+    // Money in
+    "Income",
+    "Allowance",
+    "Paid back",
+    "Refunds",
+    "Interest & rebates",
+    // Neither spending nor income
+    "Own transfers"
   ];
+  var EARNED = ["Income", "Allowance", "Interest & rebates"];
+  var RETURNED = ["Paid back", "Refunds"];
+  var MONEY_IN = [...EARNED, ...RETURNED];
+  var BUSINESS = /\b(PTE|LTD|LLP|INC|CORP|SINGAPORE|SHOPEE|LAZADA|GRAB|AMAZON|HEALTH|CLINIC|HOSPITAL|INSURANCE|BANK|MART|STORE|SHOP|SERVICES|PG)\b|\.COM|\d/i;
   var SUBSCRIPTION = /\b(ANTHROPIC|CLAUDE\.AI|OPENAI|CHATGPT|NETFLIX|SPOTIFY|DISNEY|YOUTUBE ?PREMIUM|APPLE\.COM|ICLOUD|GOOGLE ?(ONE|STORAGE)|NOTION|CANVA|ADOBE|MICROSOFT|GITHUB|DROPBOX|PATREON|AMAZON ?PRIME)\b/i;
   var KEYWORD_RULES = [
     [/\b(BBT|BUBBLE ?TEA|KOI|LIHO|CHICHA|GONG ?CHA|DRINKS?|SNACKS?|KOPI|COFFEE|CAFE|STARBUCKS|TOAST|MCDONALD|KFC|BURGER|PIZZA|SUBWAY|FOOD|RESTAURANT|EATERY|KITCHEN|NOODLES?|MIAN|BAK ?KUT|HAWKER|KOUFU|KOPITIAM|FOOD ?REPUBLIC|FOMO ?PAY|DELIVEROO|FOODPANDA)\b/i, "Food & Drinks"],
@@ -73,7 +84,18 @@ var ugotmonee = (() => {
     const key = normaliseMerchant(merchant);
     return ownNames.some((n) => n.trim() && ` ${key} `.includes(` ${normaliseMerchant(n)} `));
   }
-  function categorise(txn, userRules = [], ownNames = []) {
+  function moneyIn(txn, allowanceNames) {
+    var _a;
+    const hay = `${txn.merchant} ${(_a = txn.description) != null ? _a : ""}`;
+    if (isOwnName(txn.merchant, allowanceNames)) return "Allowance";
+    if (/INTEREST|REBATE|BOOSTER|CASHBACK/i.test(hay)) return "Interest & rebates";
+    if (/REVERS|REFUND|RETURNED/i.test(hay)) return "Refunds";
+    if (/\b(GOV|MINDEF|SAF|SALARY|PAYROLL|IRAS|CPF)\b/i.test(hay)) return "Income";
+    if (txn.payeeType === "business" || BUSINESS.test(txn.merchant)) return "Refunds";
+    if (txn.payeeType === "person" || /^[A-Za-z ,.'-]+$/.test(txn.merchant.trim())) return "Paid back";
+    return "Income";
+  }
+  function categorise(txn, userRules = [], ownNames = [], allowanceNames = []) {
     var _a, _b;
     const key = normaliseMerchant(txn.merchant);
     const userHit = userRules.find((r) => r.merchantKey === key);
@@ -81,8 +103,8 @@ var ugotmonee = (() => {
     const hay = `${txn.merchant} ${(_a = txn.description) != null ? _a : ""}`;
     if (OWN_TRANSFER.test(hay)) return "Own transfers";
     if (isOwnName(txn.merchant, ownNames)) return "Own transfers";
-    if (txn.direction === "credit") return "Income";
-    if (/e-?Packet|ang ?bao|hongbao/i.test((_b = txn.description) != null ? _b : "")) return "Gifts";
+    if (txn.direction === "credit") return moneyIn(txn, allowanceNames);
+    if (/\b(ang ?bao|hong ?bao|gift|birthday|wedding)\b/i.test((_b = txn.description) != null ? _b : "") && txn.kind !== "card") return "Gifts";
     for (const [re, cat] of KEYWORD_RULES) if (re.test(hay)) return cat;
     if (txn.payeeType === "person") return "Transfers";
     return "Uncategorised";
@@ -95,11 +117,13 @@ var ugotmonee = (() => {
   // src/lib/ai.ts
   var GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
   var geminiUrl = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  var AI_CATEGORIES = DEFAULT_CATEGORIES.filter((c) => c !== "Own transfers" && c !== "Income");
+  var AI_CATEGORIES = DEFAULT_CATEGORIES.filter((c) => c !== "Own transfers" && !MONEY_IN.includes(c));
   function geminiRequest(payees) {
     const prompt = [
       "Categorise these payees from a Singapore bank account. Each one is money going out.",
-      "Pick the single best category for each. A person's name, or anything you can't tell, is Uncategorised.",
+      "Pick the single best category for each. Anything you can't tell is Uncategorised.",
+      "A PayLah! Scan & Pay or NETS QR payment to a person's name is usually a hawker stall or small shop: small amounts there are usually Food & Drinks.",
+      "A PayNow transfer to a person's name is Transfers.",
       `Categories: ${AI_CATEGORIES.join(", ")}.`,
       "",
       ...payees.map((p) => JSON.stringify(p))
@@ -685,6 +709,11 @@ var ugotmonee = (() => {
     const named = /FEE|CHARGE|REBATE/i.test(type) ? void 0 : lines.find(informative);
     return { merchant: named != null ? named : type, kind: "other", payeeType: "unknown" };
   }
+  function lineYear(mon, endMonth, endYear) {
+    if (endMonth === 12 && mon === 1) return endYear + 1;
+    if (endMonth === 1 && mon === 12) return endYear - 1;
+    return mon > endMonth + 1 ? endYear - 1 : endYear;
+  }
   function parseOcbcStatement(lines) {
     var _a, _b, _c, _d;
     if (!lines.some((l) => /STATEMENT OF ACCOUNT/i.test(l)) || !lines.some((l) => /OCBC/.test(l))) return null;
@@ -707,7 +736,7 @@ var ugotmonee = (() => {
       const o = open;
       open = null;
       const d = describe2(o.type, o.lines);
-      const year = o.mon > endMonth ? endYear - 1 : endYear;
+      const year = lineYear(o.mon, endMonth, endYear);
       const when = "bought" in d && d.bought ? d.bought : { d: o.day, m: o.mon, y: year };
       const posted = toSgtIso(year, o.mon, o.day).slice(0, 10);
       txns.push({
@@ -775,7 +804,9 @@ var ugotmonee = (() => {
 
   // src/gas/main.ts
   var TX = "Transactions";
-  var SUMMARY = "Summary";
+  var SUMMARY = "Dashboard";
+  var OLD_SUMMARY = "Summary";
+  var REVIEW = "Review";
   var RULES = "Rules";
   var SETTINGS = "Settings";
   var UNRECOGNISED = "Unrecognised";
@@ -796,7 +827,8 @@ var ugotmonee = (() => {
     "Reference",
     "Merchant key",
     "Key",
-    "Statement key"
+    "Statement key",
+    "Note"
   ];
   var C = Object.fromEntries(HEADERS.map((h, i) => [h, i]));
   var QUERY = '(from:ocbc.com OR from:dbs.com OR "We refer to your PayLah!")';
@@ -822,6 +854,7 @@ var ugotmonee = (() => {
       tx.getRange("A2:A").setNumberFormat("yyyy-mm-dd hh:mm");
       tx.getRange("C2:C").setNumberFormat("#,##0.00");
       categoryDropdown(tx);
+      resetColours(tx);
       tx.hideColumns(C["Merchant key"] + 1, 3);
       tx.setColumnWidth(C.Merchant + 1, 220);
       tx.setColumnWidth(C.Description + 1, 280);
@@ -840,23 +873,50 @@ var ugotmonee = (() => {
     }
     const settings = book().getSheetByName(SETTINGS);
     if (!settings.getRange(4, 1).getValue()) settings.getRange(4, 1).setValue(PAYLAH_SETTING);
+    if (!settings.getRange(6, 1).getValue())
+      settings.getRange(6, 1, 2, 1).setValues([
+        ["Start date (yyyy-mm-dd): payments before this are removed and not added again. Blank keeps everything"],
+        ["People who give you an allowance (comma-separated), so it isn't counted as being paid back"]
+      ]);
     upgradeLayout(tx);
   }
-  var LAYOUT_VERSION = 8;
+  var LAYOUT_VERSION = 11;
+  var TAB_ORDER = [SUMMARY, TRENDS, TX, RECURRING, REVIEW, ACCOUNTS, RULES, SETTINGS, UNRECOGNISED];
   function upgradeLayout(tx) {
     const props = PropertiesService.getScriptProperties();
     const current = Number(props.getProperty("layout")) || 0;
     if (current >= LAYOUT_VERSION && book().getSheetByName(SUMMARY) && book().getSheetByName(TRENDS)) return;
-    for (const name of [SUMMARY, TRENDS]) {
+    for (const name of [OLD_SUMMARY, SUMMARY, TRENDS]) {
       const old = book().getSheetByName(name);
       if (old) book().deleteSheet(old);
     }
     buildSummary();
     buildTrends();
-    if (current < 2) colourDirections(tx);
     if (current < 6) upgradeAccounts();
     if (current < 8) moveSubscriptions(tx);
+    if (current < 9) {
+      resetColours(tx);
+      tx.getRange(1, C.Note + 1).setValue("Note").setFontWeight("bold");
+      book().getSheetByName(RULES).getRange(1, 4).setValue("Note").setFontWeight("bold");
+      dedupeGenericLines();
+      recategorise();
+      props.deleteProperty("aiTried");
+      orderTabs();
+    }
+    if (current < 10) {
+      recategorise();
+      buildReview();
+    }
     props.setProperty("layout", String(LAYOUT_VERSION));
+  }
+  function orderTabs() {
+    TAB_ORDER.forEach((name, i) => {
+      const sheet = book().getSheetByName(name);
+      if (!sheet) return;
+      book().setActiveSheet(sheet);
+      book().moveActiveSheet(i + 1);
+    });
+    book().setActiveSheet(book().getSheetByName(SUMMARY));
   }
   function categoryDropdown(tx) {
     tx.getRange("F2:F").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList([...DEFAULT_CATEGORIES], true).setAllowInvalid(true).build());
@@ -878,52 +938,102 @@ var ugotmonee = (() => {
     });
     tx.getRange(2, C.Category + 1, n, 1).setValues(cats);
   }
+  function resetColours(tx) {
+    const ours = /^=\$E2="(in|out)"$/;
+    const kept = tx.getConditionalFormatRules().filter((r) => {
+      var _a, _b, _c;
+      return !ours.test(String((_c = (_b = (_a = r.getBooleanCondition()) == null ? void 0 : _a.getCriteriaValues()) == null ? void 0 : _b[0]) != null ? _c : ""));
+    });
+    tx.setConditionalFormatRules(kept);
+    colourDirections(tx);
+  }
   function colourDirections(tx) {
     const rule = (direction2, font, fill) => SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied(`=$E2="${direction2}"`).setFontColor(font).setBackground(fill).setRanges([tx.getRange("C2:C"), tx.getRange("E2:E")]).build();
     tx.setConditionalFormatRules([...tx.getConditionalFormatRules(), rule("in", "#137333", "#e6f4ea"), rule("out", "#a50e0e", "#fce8e6")]);
   }
+  var T = `'${TX}'`;
+  var between = (from, to) => `${T}!A:A,">="&${from},${T}!A:A,"<"&${to}`;
+  var sumIn = (cats, from, to) => `(${cats.map((c) => `SUMIFS(${T}!C:C,${T}!E:E,"in",${T}!F:F,"${c}",${between(from, to)})`).join("+")})`;
+  var spentF = (from, to) => `SUMIFS(${T}!C:C,${T}!E:E,"out",${T}!F:F,"<>Own transfers",${between(from, to)})`;
+  var backF = (from, to) => sumIn(RETURNED, from, to);
+  var incomeF = (from, to) => sumIn(EARNED, from, to);
+  var money = "#,##0.00";
   function buildSummary() {
     const s = book().insertSheet(SUMMARY, 0);
-    const t = `'${TX}'`;
-    const from = `TEXT(B1,"yyyy-mm-dd")`;
-    const to = `TEXT(EDATE(B1,1),"yyyy-mm-dd")`;
+    const t = T;
+    const month = ["$B$1", "EDATE($B$1,1)"];
+    const from = `TEXT($B$1,"yyyy-mm-dd")`;
+    const to = `TEXT(EDATE($B$1,1),"yyyy-mm-dd")`;
+    const inMonth = `A >= datetime '"&${from}&" 00:00:00' and A < datetime '"&${to}&" 00:00:00'`;
     const months = `ARRAYFORMULA(IF(${t}!A2:A="",,EOMONTH(${t}!A2:A,-1)+1))`;
     s.getRange("Z1").setValue("Months");
     s.getRange("Z2").setFormula(`=SORT(UNIQUE(FILTER(${months},${months}<>"")),1,FALSE)`);
     s.getRange("Z2:Z").setNumberFormat("mmm yyyy");
     s.hideColumns(26);
-    s.getRange("A1").setValue("Month");
-    s.getRange("B1").setFormula(`=IF(COUNT(${t}!A2:A),EOMONTH(MAX(${t}!A2:A),-1)+1,DATE(YEAR(TODAY()),MONTH(TODAY()),1))`).setNumberFormat("mmm yyyy").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInRange(s.getRange("Z2:Z"), true).setAllowInvalid(true).build());
-    s.getRange("D1").setValue("Spent");
-    s.getRange("E1").setFormula(`=SUMIFS(${t}!C:C,${t}!E:E,"out",${t}!F:F,"<>Own transfers",${t}!A:A,">="&B1,${t}!A:A,"<"&EDATE(B1,1))`).setNumberFormat("#,##0.00");
-    s.getRange("A3").setFormula(
-      `=QUERY(${t}!A:F,"select F, sum(C) where E = 'out' and F <> 'Own transfers' and A >= datetime '"&${from}&" 00:00:00' and A < datetime '"&${to}&" 00:00:00' group by F order by sum(C) desc label F 'Category', sum(C) 'Spent'",1)`
+    s.setColumnWidth(1, 200);
+    s.getRange("A1").setValue("Month").setFontWeight("bold");
+    s.getRange("B1").setFormula(`=IF(COUNT(${t}!A2:A),EOMONTH(MAX(${t}!A2:A),-1)+1,DATE(YEAR(TODAY()),MONTH(TODAY()),1))`).setNumberFormat("mmm yyyy").setFontWeight("bold").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInRange(s.getRange("Z2:Z"), true).setAllowInvalid(true).build());
+    s.getRange("C1").setValue("Pick a month to see it below. Net spent = spent minus what came back to you.");
+    s.getRange("A3:H3").setValues([["Spent", "Paid back & refunds", "Net spent", "Income", "Saved", "Savings rate", "vs last 3 months", "Balance now (est.)"]]).setFontWeight("bold");
+    s.getRange("A4").setFormula(`=${spentF(...month)}`);
+    s.getRange("B4").setFormula(`=${backF(...month)}`);
+    s.getRange("C4").setFormula("=A4-B4");
+    s.getRange("D4").setFormula(`=${incomeF(...month)}`);
+    s.getRange("E4").setFormula("=D4-C4");
+    s.getRange("F4").setFormula(`=IF(D4>0,E4/D4,"")`);
+    s.getRange("G4").setFormula(`=IFERROR(C4/((${spentF("EDATE($B$1,-3)", "$B$1")}-${backF("EDATE($B$1,-3)", "$B$1")})/3)-1,"")`);
+    s.getRange("H4").setFormula(`=SUM('${ACCOUNTS}'!D2:D)`);
+    s.getRange("A4:H4").setFontSize(14).setFontWeight("bold").setNumberFormat(money);
+    s.getRange("F4:G4").setNumberFormat("+0%;-0%;0%");
+    s.getRange("A6").setValue("Where it went").setFontWeight("bold");
+    s.getRange("A7").setFormula(
+      `=IFERROR(QUERY(${t}!A:F,"select F, sum(C) where E = 'out' and F <> 'Own transfers' and ${inMonth} group by F order by sum(C) desc label F 'Category', sum(C) 'Spent'",1),"Nothing this month")`
     );
-    s.getRange("B4:B20").setNumberFormat("#,##0.00");
-    s.insertChart(s.newChart().setChartType(Charts.ChartType.PIE).setNumHeaders(1).addRange(s.getRange("A3:B20")).setPosition(3, 4, 0, 0).build());
-    s.getRange("A23").setValue("By month");
-    s.getRange("A24").setFormula(
-      `=QUERY({${months},${t}!C2:C,${t}!E2:E,${t}!F2:F},"select Col1, sum(Col2) where Col1 is not null and Col4 <> 'Own transfers' group by Col1 pivot Col3 order by Col1 desc label Col1 'Month'",0)`
+    s.getRange("B8:B24").setNumberFormat(money);
+    s.getRange("A27").setValue("Money in").setFontWeight("bold");
+    s.getRange("A28").setFormula(
+      `=IFERROR(QUERY(${t}!A:F,"select F, sum(C) where E = 'in' and F <> 'Own transfers' and ${inMonth} group by F order by sum(C) desc label F 'Kind', sum(C) 'Amount'",1),"Nothing this month")`
     );
-    s.getRange("A25:A60").setNumberFormat("mmm yyyy");
-    s.getRange("B25:C60").setNumberFormat("#,##0.00");
-    s.getRange("G1").setValue("Balance (est.)");
-    s.getRange("H1").setFormula(`=SUM('${ACCOUNTS}'!D2:D)`).setNumberFormat("#,##0.00");
-    s.getRange("A1:H1").setFontWeight("bold");
-    s.getRange("A23").setFontWeight("bold");
+    s.getRange("B29:B34").setNumberFormat(money);
+    s.getRange("A37").setValue("Biggest payments").setFontWeight("bold");
+    s.getRange("A38").setFormula(
+      `=IFERROR(QUERY(${t}!A:F,"select B, C, F, A where E = 'out' and F <> 'Own transfers' and ${inMonth} order by C desc limit 8 label B 'Merchant', C 'Amount', F 'Category', A 'Date'",1),"Nothing this month")`
+    );
+    s.getRange("B39:B46").setNumberFormat(money);
+    s.getRange("D39:D46").setNumberFormat("d mmm");
+    const thisMonth = "(EOMONTH(TODAY(),-1)+1)";
+    const startM = `MAX(EDATE(${thisMonth},-11),EOMONTH(MIN(${t}!A2:A),-1)+1)`;
+    const m = "A50:A61";
+    s.getRange("A48").setValue("Last 12 months").setFontWeight("bold");
+    s.getRange("A49:D49").setValues([["Month", "Income", "Net spent", "Saved"]]).setFontWeight("bold");
+    s.getRange("A50").setFormula(`=IF(COUNT(${t}!A2:A),ARRAYFORMULA(EDATE(${startM},SEQUENCE(DATEDIF(${startM},${thisMonth},"M")+1,1,0))),)`);
+    s.getRange("B50").setFormula(`=MAP(${m},LAMBDA(x,IF(x="",,${incomeF("x", "EDATE(x,1)")})))`);
+    s.getRange("C50").setFormula(`=MAP(${m},LAMBDA(x,IF(x="",,${spentF("x", "EDATE(x,1)")}-${backF("x", "EDATE(x,1)")})))`);
+    s.getRange("D50").setFormula(`=MAP(B50:B61,C50:C61,LAMBDA(i,o,IF(i="",,i-o)))`);
+    s.getRange(m).setNumberFormat("mmm yyyy");
+    s.getRange("B50:D61").setNumberFormat(money);
+    const chart = (type, row, title, ranges) => {
+      let b = s.newChart().setChartType(type).setNumHeaders(1).setPosition(row, 5, 0, 0).setOption("title", title).setOption("width", 560).setOption("height", 340);
+      for (const r of ranges) b = b.addRange(s.getRange(r));
+      return b;
+    };
+    s.insertChart(chart(Charts.ChartType.BAR, 6, "Where it went this month", ["A7:B24"]).setOption("legend", { position: "none" }).setOption("colors", ["#c5221f"]).build());
+    s.insertChart(
+      chart(Charts.ChartType.COLUMN, 27, "Income and net spent, last 12 months", ["A49:C61"]).setOption("legend", { position: "bottom" }).setOption("colors", ["#137333", "#c5221f"]).build()
+    );
   }
   function buildTrends() {
     const s = book().insertSheet(TRENDS, 1);
     const t = `'${TX}'`;
     const thisMonth = "(EOMONTH(TODAY(),-1)+1)";
-    const total = (dir, from, to) => `SUMIFS(${t}!C:C,${t}!E:E,"${dir}",${t}!F:F,"<>Own transfers",${t}!A:A,">="&${from},${t}!A:A,"<"&${to})`;
+    const total = (dir, from, to) => dir === "in" ? incomeF(from, to) : `(${spentF(from, to)}-${backF(from, to)})`;
     const spend = `${t}!E2:E="out",${t}!F2:F<>"Own transfers"`;
     const earliest = `MIN(${t}!A2:A)`;
     const firstFull = `IF(DAY(${earliest})=1,EOMONTH(${earliest},-1)+1,EOMONTH(${earliest},0)+1)`;
     const avgFrom = `EDATE(${thisMonth},-B8)`;
     s.getRange("A1").setValue("Trends").setFontWeight("bold");
     s.getRange("A2").setValue(
-      "Leaves out transfers between your own accounts. A month without its statement imported misses NETS QR and card payments, so it reads low."
+      "Spent here is net: what you paid, minus friends paying you back and refunds. Income is what you earned or were given. Transfers between your own accounts are left out."
     );
     s.getRange("A4:B12").setValues([
       ["Spent this month", ""],
@@ -931,9 +1041,9 @@ var ugotmonee = (() => {
       ["On pace for", ""],
       ["", ""],
       ["Full months averaged (up to 3)", ""],
-      ["Average spent per month", ""],
-      ["Average spent per day", ""],
-      ["Average money in per month", ""],
+      ["Average net spent per month", ""],
+      ["Average net spent per day", ""],
+      ["Average income per month", ""],
       ["Average left over per month", ""]
     ]);
     s.getRange("B4").setFormula(`=${total("out", thisMonth, `EDATE(${thisMonth},1)`)}`);
@@ -948,7 +1058,7 @@ var ugotmonee = (() => {
     s.getRange("B8").setNumberFormat("0");
     const start = `MAX(EDATE(${thisMonth},-11),EOMONTH(${earliest},-1)+1)`;
     const m = "A15:A26";
-    s.getRange("A14:C14").setValues([["Month", "Money in", "Spent"]]).setFontWeight("bold");
+    s.getRange("A14:C14").setValues([["Month", "Income", "Net spent"]]).setFontWeight("bold");
     s.getRange("A15").setFormula(`=IF(COUNT(${t}!A2:A),ARRAYFORMULA(EDATE(${start},SEQUENCE(DATEDIF(${start},${thisMonth},"M")+1,1,0))),)`);
     s.getRange("B15").setFormula(`=MAP(${m},LAMBDA(x,IF(x="",,${total("in", "x", "EDATE(x,1)")})))`);
     s.getRange("C15").setFormula(`=MAP(${m},LAMBDA(x,IF(x="",,${total("out", "x", "EDATE(x,1)")})))`);
@@ -983,16 +1093,20 @@ var ugotmonee = (() => {
       for (const r of ranges) b = b.addRange(s.getRange(r));
       return b;
     };
-    s.insertChart(chart(Charts.ChartType.COLUMN, 4, "Money in and spent by month", ["A14:C26"]).setOption("colors", ["#137333", "#c5221f"]).build());
+    s.insertChart(chart(Charts.ChartType.COLUMN, 4, "Income and net spent by month", ["A14:C26"]).setOption("colors", ["#137333", "#c5221f"]).build());
     s.insertChart(chart(Charts.ChartType.COLUMN, 24, "Spending by category", ["A61:P73"]).setOption("isStacked", true).build());
     s.insertChart(chart(Charts.ChartType.BAR, 44, "Top merchants, last 90 days", ["A30:A45", "C30:C45"]).setOption("legend", { position: "none" }).build());
   }
   function context() {
-    var _a;
+    var _a, _b;
     const rules = book().getSheetByName(RULES);
     const userRules = rules.getLastRow() > 1 ? rules.getRange(2, 1, rules.getLastRow() - 1, 2).getValues().map((r) => ({ merchantKey: String(r[0]), category: String(r[1]) })) : [];
-    const ownNames = String((_a = book().getSheetByName(SETTINGS).getRange("B2").getValue()) != null ? _a : "").split(",");
-    return { userRules, ownNames };
+    const settings = book().getSheetByName(SETTINGS);
+    const ownNames = String((_a = settings.getRange("B2").getValue()) != null ? _a : "").split(",");
+    const allowanceNames = String((_b = settings.getRange("B7").getValue()) != null ? _b : "").split(",");
+    const start = settings.getRange("B6").getValue();
+    const startDate = start instanceof Date ? start : /^\d{4}-\d{2}-\d{2}$/.test(String(start).trim()) ? /* @__PURE__ */ new Date(`${String(start).trim()}T00:00:00+08:00`) : null;
+    return { userRules, ownNames, allowanceNames, startDate };
   }
   function loadTransactions() {
     const sheet = book().getSheetByName(TX);
@@ -1034,13 +1148,15 @@ var ugotmonee = (() => {
     row[C["Merchant key"]] = normaliseMerchant(t.merchant);
     row[C.Key] = e.key;
     row[C["Statement key"]] = (_c = e.stmtKey) != null ? _c : "";
+    row[C.Note] = "";
     return row;
   }
   function record(entries, origin) {
     var _a, _b;
     const { sheet, rows, keys } = loadTransactions();
-    const { userRules, ownNames } = context();
+    const { userRules, ownNames, allowanceNames, startDate } = context();
     const other = candidates(rows, origin === "email" ? "statement" : "email");
+    const cat = (t) => withReversal(t, categorise(t, userRules, ownNames, allowanceNames), userRules, [...rows, ...added]);
     const used = /* @__PURE__ */ new Set();
     const added = [];
     let matched = 0;
@@ -1050,6 +1166,7 @@ var ugotmonee = (() => {
         skipped++;
         continue;
       }
+      if (startDate && Date.parse(e.txn.occurredAt) < startDate.getTime()) continue;
       keys.add(e.key);
       const t = e.txn;
       const m = findMatch(
@@ -1068,7 +1185,7 @@ var ugotmonee = (() => {
           if (isGeneric(String(row[C["Merchant key"]]))) {
             row[C.Merchant] = t.merchant;
             row[C["Merchant key"]] = normaliseMerchant(t.merchant);
-            row[C.Category] = categorise(t, userRules, ownNames);
+            row[C.Category] = cat(t);
           }
         } else {
           row[C["Statement key"]] = (_b = e.stmtKey) != null ? _b : "";
@@ -1076,7 +1193,7 @@ var ugotmonee = (() => {
         matched++;
         continue;
       }
-      added.push(toRow(e, categorise(t, userRules, ownNames), origin));
+      added.push(toRow(e, cat(t), origin));
     }
     if (matched) sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
     if (added.length) {
@@ -1084,6 +1201,149 @@ var ugotmonee = (() => {
       sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS.length).sort({ column: C.Date + 1, ascending: false });
     }
     return { added: added.length, matched, skipped };
+  }
+  function withReversal(t, category, userRules, rows) {
+    if (t.direction !== "credit" || category === "Own transfers" || userRules.some((r) => r.merchantKey === normaliseMerchant(t.merchant))) return category;
+    const at = Date.parse(t.occurredAt);
+    const words2 = normaliseMerchant(t.merchant).split(" ").filter((w) => w.length >= 3);
+    const paid = rows.some(
+      (r) => r[C.Direction] === "out" && Math.round(Number(r[C.Amount]) * 100) === t.amountCents && r[C.Date] instanceof Date && at - r[C.Date].getTime() >= -DAY3 && at - r[C.Date].getTime() <= 30 * DAY3 && String(r[C["Merchant key"]]).split(" ").some((w) => words2.includes(w))
+    );
+    if (paid) return "Refunds";
+    if (category === "Paid back") {
+      const key = normaliseMerchant(t.merchant);
+      const months = new Set(
+        rows.filter((r) => r[C.Direction] === "in" && r[C["Merchant key"]] === key && r[C.Date] instanceof Date).map((r) => ymd(r[C.Date]).slice(0, 7))
+      );
+      months.add(t.occurredAt.slice(0, 7));
+      if (months.size >= 3) return "Allowance";
+    }
+    return category;
+  }
+  function writeRows(sheet, rows, before) {
+    if (rows.length) sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
+    if (before > rows.length) sheet.deleteRows(2 + rows.length, before - rows.length);
+  }
+  function pruneBeforeStart() {
+    const { startDate } = context();
+    if (!startDate) return;
+    const { sheet, rows } = loadTransactions();
+    const kept = rows.filter((r) => !(r[C.Date] instanceof Date) || r[C.Date].getTime() >= startDate.getTime());
+    if (kept.length < rows.length) writeRows(sheet, kept, rows.length);
+  }
+  function dedupeGenericLines() {
+    const { sheet, rows } = loadTransactions();
+    const drop = /* @__PURE__ */ new Set();
+    rows.forEach((r, i) => {
+      if (r[C.Source] !== "statement" || !isGeneric(String(r[C["Merchant key"]])) || !(r[C.Date] instanceof Date)) return;
+      const j = rows.findIndex(
+        (o, k) => k !== i && !drop.has(k) && o[C.Source] === "email" && o[C.Account] === r[C.Account] && o[C.Direction] === r[C.Direction] && Number(o[C.Amount]) === Number(r[C.Amount]) && o[C.Date] instanceof Date && Math.abs(o[C.Date].getTime() - r[C.Date].getTime()) < 2 * DAY3
+      );
+      if (j < 0) return;
+      rows[j][C.Source] = "both";
+      rows[j][C["Statement key"]] = r[C["Statement key"]];
+      drop.add(i);
+    });
+    if (drop.size) writeRows(sheet, rows.filter((_, i) => !drop.has(i)), rows.length);
+  }
+  function chosenKeys() {
+    const rules = book().getSheetByName(RULES);
+    const rows = rules.getLastRow() > 1 ? rules.getRange(2, 1, rules.getLastRow() - 1, 3).getValues() : [];
+    return new Set(rows.filter((r) => r[2] !== "Gemini").map((r) => String(r[0])));
+  }
+  function recategorise() {
+    const { sheet, rows } = loadTransactions();
+    const { userRules, ownNames, allowanceNames } = context();
+    const chosen = chosenKeys();
+    let changed = false;
+    rows.forEach((r) => {
+      if (chosen.has(String(r[C["Merchant key"]]))) return;
+      const t = {
+        merchant: String(r[C.Merchant]),
+        description: String(r[C.Description]) || null,
+        payeeType: "unknown",
+        kind: String(r[C.Type])
+      };
+      let next = r[C.Category];
+      if (r[C.Direction] === "in" && (r[C.Category] === "Income" || r[C.Category] === "Paid back")) {
+        const at = r[C.Date] instanceof Date ? r[C.Date].toISOString() : "";
+        const full = { ...t, direction: "credit", amountCents: Math.round(Number(r[C.Amount]) * 100), occurredAt: at };
+        next = withReversal(full, categorise(full, userRules, ownNames, allowanceNames), userRules, rows);
+      } else if (r[C.Direction] === "out" && r[C.Category] === "Gifts" && /e-?Packet/i.test(String(r[C.Description]))) {
+        next = categorise({ ...t, payeeType: "person" }, userRules, ownNames);
+      }
+      if (next !== r[C.Category]) {
+        r[C.Category] = next;
+        changed = true;
+      }
+    });
+    if (changed) sheet.getRange(2, C.Category + 1, rows.length, 1).setValues(rows.map((r) => [r[C.Category]]));
+  }
+  var REVIEW_SIZE = 15;
+  var REVIEW_HEADERS = ["Merchant", "Category", "Set by", "Payments", "Total", "Last paid", "Example", "Your note", "Merchant key"];
+  function buildReview() {
+    var _a;
+    const { rows } = loadTransactions();
+    const rules = book().getSheetByName(RULES);
+    const ruleRows = rules.getLastRow() > 1 ? rules.getRange(2, 1, rules.getLastRow() - 1, 3).getValues() : [];
+    const setBy = new Map(ruleRows.map((r) => [String(r[0]), String(r[2]) || "you"]));
+    const groups = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = String(r[C["Merchant key"]]);
+      if (!key || r[C.Category] === "Own transfers" || !(r[C.Date] instanceof Date)) continue;
+      const g = groups.get(key);
+      const amount = Number(r[C.Amount]);
+      if (!g) groups.set(key, { merchant: String(r[C.Merchant]), category: String(r[C.Category]), count: 1, total: amount, last: r[C.Date], example: String(r[C.Description]) });
+      else {
+        g.count++;
+        g.total += amount;
+      }
+    }
+    const pick = [...groups.entries()].filter(([key]) => setBy.get(key) !== "you").map(([key, g]) => ({ key, g, draw: Math.random() ** (1 / Math.sqrt(g.total + 1)) })).sort((a, b) => b.draw - a.draw).slice(0, REVIEW_SIZE).sort((a, b) => b.g.total - a.g.total);
+    const s = (_a = book().getSheetByName(REVIEW)) != null ? _a : book().insertSheet(REVIEW);
+    s.clearContents();
+    s.getRange(1, 1, 1, REVIEW_HEADERS.length).setValues([REVIEW_HEADERS]).setFontWeight("bold");
+    s.setFrozenRows(1);
+    s.setColumnWidth(1, 220);
+    s.setColumnWidth(7, 260);
+    s.hideColumns(REVIEW_HEADERS.length);
+    const out = pick.map(({ key, g }) => {
+      var _a2;
+      return [g.merchant, g.category, (_a2 = setBy.get(key)) != null ? _a2 : "built-in", g.count, g.total, g.last, g.example, "", key];
+    });
+    if (out.length) s.getRange(2, 1, out.length, REVIEW_HEADERS.length).setValues(out);
+    s.getRange("B2:B").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList([...DEFAULT_CATEGORIES], true).setAllowInvalid(true).build());
+    s.getRange("E2:E").setNumberFormat(money);
+    s.getRange("F2:F").setNumberFormat("yyyy-mm-dd");
+    s.getRange("K1:K2").setValues([
+      ["Check these. Change a category and every payment to that merchant follows. Add a note to remember why."],
+      ["For a new random set: ugotmonee > Review random merchants."]
+    ]);
+  }
+  function reviewMerchants() {
+    ensureSheets();
+    buildReview();
+    book().setActiveSheet(book().getSheetByName(REVIEW));
+  }
+  function reviewEdited(row, column, value) {
+    const s = book().getSheetByName(REVIEW);
+    const [category, key] = [String(s.getRange(row, 2).getValue()), String(s.getRange(row, REVIEW_HEADERS.length).getValue())];
+    if (!key) return;
+    if (column === 2 && value) {
+      saveRules(/* @__PURE__ */ new Map([[key, value]]), "you");
+      applyCategory(key, value);
+      s.getRange(row, 3).setValue("you");
+    } else if (column === 8) {
+      saveRules(/* @__PURE__ */ new Map([[key, category]]), "you", value);
+      s.getRange(row, 3).setValue("you");
+    }
+  }
+  function applyCategory(key, category) {
+    const sheet = book().getSheetByName(TX);
+    const n = sheet.getLastRow() - 1;
+    if (n < 1) return;
+    const rows = sheet.getRange(2, 1, n, HEADERS.length).getValues();
+    sheet.getRange(2, C.Category + 1, n, 1).setValues(rows.map((r) => [r[C["Merchant key"]] === key && r[C.Category] !== "Own transfers" ? category : r[C.Category]]));
   }
   function buildRecurring() {
     var _a;
@@ -1168,6 +1428,7 @@ var ugotmonee = (() => {
     if (!lock.tryLock(1e4)) return { added: 0, matched: 0, skipped: 0, more: true };
     try {
       ensureSheets();
+      pruneBeforeStart();
       const started = Date.now();
       const props = PropertiesService.getScriptProperties();
       let cursor = Number(props.getProperty("cursor")) || started - BACKFILL_DAYS * DAY3;
@@ -1250,7 +1511,7 @@ var ugotmonee = (() => {
     }
   }
   function onOpen() {
-    SpreadsheetApp.getUi().createMenu("ugotmonee").addItem("Set up", "setup").addItem("Sync emails now", "syncNow").addItem("Import statement (PDF)\u2026", "showImport").addItem("Update balance\u2026", "updateBalances").addSeparator().addItem("Categorise with Gemini\u2026", "setGeminiKey").addToUi();
+    SpreadsheetApp.getUi().createMenu("ugotmonee").addItem("Set up", "setup").addItem("Sync emails now", "syncNow").addItem("Import statement (PDF)\u2026", "showImport").addItem("Update balance\u2026", "updateBalances").addItem("Review random merchants", "reviewMerchants").addSeparator().addItem("Categorise with Gemini\u2026", "setGeminiKey").addToUi();
   }
   function setup() {
     book().setSpreadsheetTimeZone("Asia/Singapore");
@@ -1272,12 +1533,13 @@ var ugotmonee = (() => {
     book().toast(`${r.added} new, ${r.matched} matched to statement lines.${r.more ? " More still loading." : ""}`, "ugotmonee");
   }
   function onEdit(e) {
-    var _a;
+    var _a, _b;
     const range = e.range;
     const sheet = range.getSheet();
-    if (sheet.getName() === SETTINGS && range.getRow() === 2 && range.getColumn() === 2) return markOwnTransfers();
+    if (sheet.getName() === SETTINGS && range.getColumn() === 2 && (range.getRow() === 2 || range.getRow() === 7)) return markOwnTransfers();
+    if (sheet.getName() === REVIEW && range.getRow() >= 2 && range.getNumRows() === 1) return reviewEdited(range.getRow(), range.getColumn(), String((_a = e.value) != null ? _a : "").trim());
     if (sheet.getName() !== TX || range.getColumn() !== C.Category + 1 || range.getNumRows() !== 1 || range.getRow() < 2) return;
-    const category = String((_a = e.value) != null ? _a : "").trim();
+    const category = String((_b = e.value) != null ? _b : "").trim();
     const key = String(sheet.getRange(range.getRow(), C["Merchant key"] + 1).getValue());
     if (!category || !key) return;
     const learned = /* @__PURE__ */ new Map([[key, category]]);
@@ -1285,15 +1547,21 @@ var ugotmonee = (() => {
     fillCategories(learned);
   }
   function markOwnTransfers() {
-    const { ownNames } = context();
+    const { ownNames, allowanceNames } = context();
     const sheet = book().getSheetByName(TX);
     const n = sheet.getLastRow() - 1;
     if (n < 1) return;
-    const guessed = ["Transfers", "Income", "Uncategorised"];
-    const cats = sheet.getRange(2, 1, n, HEADERS.length).getValues().map((r) => [guessed.includes(String(r[C.Category])) && isOwnName(String(r[C.Merchant]), ownNames) ? "Own transfers" : r[C.Category]]);
+    const guessed = ["Transfers", "Income", "Paid back", "Uncategorised"];
+    const cats = sheet.getRange(2, 1, n, HEADERS.length).getValues().map((r) => {
+      const merchant = String(r[C.Merchant]);
+      if (!guessed.includes(String(r[C.Category]))) return [r[C.Category]];
+      if (isOwnName(merchant, ownNames)) return ["Own transfers"];
+      if (r[C.Direction] === "in" && isOwnName(merchant, allowanceNames)) return ["Allowance"];
+      return [r[C.Category]];
+    });
     sheet.getRange(2, C.Category + 1, n, 1).setValues(cats);
   }
-  function saveRules(learned, by) {
+  function saveRules(learned, by, note) {
     const rules = book().getSheetByName(RULES);
     const keys = rules.getLastRow() > 1 ? rules.getRange(2, 1, rules.getLastRow() - 1, 1).getValues().map((r) => String(r[0])) : [];
     for (const [key, category] of learned) {
@@ -1303,6 +1571,7 @@ var ugotmonee = (() => {
         rules.appendRow([key, category, by]);
         keys.push(key);
       }
+      if (note !== void 0) rules.getRange(keys.indexOf(key) + 2, 4).setValue(note);
     }
   }
   function fillCategories(learned) {
@@ -1547,3 +1816,4 @@ function importStatement(...args) { return ugotmonee.importStatement(...args); }
 function remindStatements(...args) { return ugotmonee.remindStatements(...args); }
 function setGeminiKey(...args) { return ugotmonee.setGeminiKey(...args); }
 function updateBalances(...args) { return ugotmonee.updateBalances(...args); }
+function reviewMerchants(...args) { return ugotmonee.reviewMerchants(...args); }

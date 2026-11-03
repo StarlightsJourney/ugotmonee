@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { findMatch } from "../match";
 import { normaliseMerchant } from "../categorise";
 import { itemsToLines, parseStatement } from ".";
+import { lineYear } from "./ocbc";
 
 // Layout as itemsToLines produces it from the real PDFs. Every name, number
 // and merchant here is made up.
@@ -51,6 +52,14 @@ const DBS = `
                      31/07/2026                                                                                13.80
                                     Total Balance Carried Forward in SGD:   25.00          8.80         13.80
 `.split("\n");
+
+it("puts a credit posted the day after the period in the right year", () => {
+  expect(lineYear(8, 7, 2026)).toBe(2026);
+  expect(lineYear(1, 12, 2025)).toBe(2026);
+  expect(lineYear(12, 1, 2027)).toBe(2026);
+  expect(lineYear(3, 7, 2026)).toBe(2026);
+  expect(lineYear(11, 2, 2026)).toBe(2025);
+});
 
 describe("OCBC statement", () => {
   const st = parseStatement(OCBC)!;

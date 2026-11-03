@@ -1,8 +1,6 @@
 import type { ParsedTxn, TxnDirection } from "./parsers";
 
 export const DEFAULT_CATEGORIES = [
-  "Own transfers",
-  "Income",
   "Food & Drinks",
   "Groceries",
   "Transport",
@@ -16,7 +14,24 @@ export const DEFAULT_CATEGORIES = [
   "Transfers",
   "Cash",
   "Uncategorised",
+  // Money in
+  "Income",
+  "Allowance",
+  "Paid back",
+  "Refunds",
+  "Interest & rebates",
+  // Neither spending nor income
+  "Own transfers",
 ] as const;
+
+/** Money in that you earned or were given. Counts as income. */
+export const EARNED = ["Income", "Allowance", "Interest & rebates"];
+/** Money in that gives back what you spent: a friend paying you back, a shop refund, a failed transfer returned. */
+export const RETURNED = ["Paid back", "Refunds"];
+export const MONEY_IN: readonly string[] = [...EARNED, ...RETURNED];
+
+/** Names that are businesses, not people. A payment in from a business is a refund, from a person it's being paid back. */
+const BUSINESS = /\b(PTE|LTD|LLP|INC|CORP|SINGAPORE|SHOPEE|LAZADA|GRAB|AMAZON|HEALTH|CLINIC|HOSPITAL|INSURANCE|BANK|MART|STORE|SHOP|SERVICES|PG)\b|\.COM|\d/i;
 
 /** Services that charge on a schedule. Exported so existing rows can be moved over once. */
 export const SUBSCRIPTION =
@@ -58,10 +73,23 @@ export function isOwnName(merchant: string, ownNames: string[]): boolean {
   return ownNames.some((n) => n.trim() && ` ${key} `.includes(` ${normaliseMerchant(n)} `));
 }
 
+/** What a payment coming in is, when no rule of yours says otherwise. */
+function moneyIn(txn: Pick<ParsedTxn, "merchant" | "description" | "payeeType">, allowanceNames: string[]): string {
+  const hay = `${txn.merchant} ${txn.description ?? ""}`;
+  if (isOwnName(txn.merchant, allowanceNames)) return "Allowance";
+  if (/INTEREST|REBATE|BOOSTER|CASHBACK/i.test(hay)) return "Interest & rebates";
+  if (/REVERS|REFUND|RETURNED/i.test(hay)) return "Refunds";
+  if (/\b(GOV|MINDEF|SAF|SALARY|PAYROLL|IRAS|CPF)\b/i.test(hay)) return "Income";
+  if (txn.payeeType === "business" || BUSINESS.test(txn.merchant)) return "Refunds";
+  if (txn.payeeType === "person" || /^[A-Za-z ,.'-]+$/.test(txn.merchant.trim())) return "Paid back";
+  return "Income";
+}
+
 export function categorise(
   txn: Pick<ParsedTxn, "merchant" | "description" | "payeeType" | "kind"> & { direction?: TxnDirection },
   userRules: UserRule[] = [],
   ownNames: string[] = [],
+  allowanceNames: string[] = [],
 ): string {
   const key = normaliseMerchant(txn.merchant);
   const userHit = userRules.find((r) => r.merchantKey === key);
@@ -70,8 +98,10 @@ export function categorise(
   const hay = `${txn.merchant} ${txn.description ?? ""}`;
   if (OWN_TRANSFER.test(hay)) return "Own transfers";
   if (isOwnName(txn.merchant, ownNames)) return "Own transfers";
-  if (txn.direction === "credit") return "Income";
-  if (/e-?Packet|ang ?bao|hongbao/i.test(txn.description ?? "")) return "Gifts";
+  if (txn.direction === "credit") return moneyIn(txn, allowanceNames);
+  // OCBC labels every e-Packet with a festive theme ("Deepavali e-Packet") even for a plain
+  // transfer, so it says nothing about gifts. Only your own words do.
+  if (/\b(ang ?bao|hong ?bao|gift|birthday|wedding)\b/i.test(txn.description ?? "") && txn.kind !== "card") return "Gifts";
   for (const [re, cat] of KEYWORD_RULES) if (re.test(hay)) return cat;
   if (txn.payeeType === "person") return "Transfers";
   return "Uncategorised";

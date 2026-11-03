@@ -6,7 +6,7 @@ await mkdir("apps-script", { recursive: true });
 // The manifest lives in src/gas because `clasp create` overwrites the one in apps-script/.
 await copyFile("src/gas/appsscript.json", "apps-script/appsscript.json");
 
-const ENTRY_POINTS = ["onOpen", "onEdit", "setup", "sync", "syncNow", "showImport", "importStatement", "remindStatements", "setGeminiKey", "updateBalances"];
+const ENTRY_POINTS = ["onOpen", "onEdit", "setup", "sync", "syncNow", "showImport", "importStatement", "remindStatements", "setGeminiKey", "updateBalances", "reviewMerchants"];
 
 const server = await build({
   entryPoints: ["src/gas/main.ts"],

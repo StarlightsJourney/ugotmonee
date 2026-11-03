@@ -19,8 +19,9 @@ describe("categorise", () => {
     ["Some Random Co", "Uncategorised"],
   ])("%s -> %s", (merchant, cat) => expect(categorise(t(merchant))).toBe(cat));
 
-  it("e-Packets are gifts, person payees are transfers", () => {
-    expect(categorise(t("JANE TAN", { payeeType: "person", description: "Deepavali e-Packet" }))).toBe("Gifts");
+  it("e-Packets are plain transfers unless you say gift, person payees are transfers", () => {
+    expect(categorise(t("JANE TAN", { payeeType: "person", description: "Deepavali e-Packet" }))).toBe("Transfers");
+    expect(categorise(t("JANE TAN", { payeeType: "person", description: "ang bao for cny" }))).toBe("Gifts");
     expect(categorise(t("JANE TAN", { payeeType: "person" }))).toBe("Transfers");
   });
 
@@ -35,7 +36,17 @@ describe("categorise", () => {
   });
 
   it("money in is income unless it's your own", () => {
-    expect(categorise(t("INTEREST CREDIT", { direction: "credit" }))).toBe("Income");
+    expect(categorise(t("INTEREST CREDIT", { direction: "credit" }))).toBe("Interest & rebates");
+  });
+
+  it("sorts money in: allowance, paid back, refunds, income", () => {
+    const credit = (m: string, extra = {}) => t(m, { direction: "credit", payeeType: "unknown", ...extra });
+    expect(categorise(credit("TAN AH KOW"), [], [], ["TAN AH KOW"])).toBe("Allowance");
+    expect(categorise(credit("JANE TAN"))).toBe("Paid back");
+    expect(categorise(credit("SHOPEE SINGAPORE"))).toBe("Refunds");
+    expect(categorise(credit("JANE TAN", { description: "PAYNOW REVERSAL" }))).toBe("Refunds");
+    expect(categorise(credit("MINDEF SAF"))).toBe("Income");
+    expect(categorise(credit("FRANK SAVE BOOSTER"))).toBe("Interest & rebates");
   });
 
   it("user rules override defaults", () => {

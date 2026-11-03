@@ -40,6 +40,9 @@ class FakeRange {
   setFontWeight() {
     return this;
   }
+  setFontSize() {
+    return this;
+  }
   setNumberFormat() {
     return this;
   }
@@ -127,6 +130,8 @@ beforeEach(() => {
       return s;
     },
     deleteSheet: (s: FakeSheet) => sheets.delete(s.getName()),
+    setActiveSheet: (s: FakeSheet) => s,
+    moveActiveSheet: () => {},
     setSpreadsheetTimeZone: () => {},
     toast: () => {},
     getUrl: () => "https://docs.google.com/spreadsheets/d/test",
@@ -147,7 +152,14 @@ beforeEach(() => {
       return b;
     },
     newConditionalFormatRule: () => {
-      const b = { whenFormulaSatisfied: () => b, setFontColor: () => b, setBackground: () => b, setRanges: () => b, build: () => ({ rule: true }) };
+      let formula = "";
+      const b = {
+        whenFormulaSatisfied: (f: string) => ((formula = f), b),
+        setFontColor: () => b,
+        setBackground: () => b,
+        setRanges: () => b,
+        build: () => ({ getBooleanCondition: () => ({ getCriteriaValues: () => [formula] }) }),
+      };
       return b;
     },
   });
@@ -310,19 +322,21 @@ describe("Apps Script", () => {
     ]);
   });
 
-  it("adds in/out colours once and rebuilds an old Summary and Trends on the next sync", () => {
+  it("keeps exactly one pair of in/out colours, rebuilds the Dashboard and Trends, and leaves your own rules", () => {
     setup();
     sync();
-    expect(sheets.get("Transactions")!.rules).toHaveLength(2);
+    const tx = sheets.get("Transactions")!;
+    expect(tx.rules).toHaveLength(2);
     expect(sheets.get("Trends")!.cells[3][0]).toBe("Spent this month");
+    tx.rules.push({ getBooleanCondition: () => ({ getCriteriaValues: () => ["=$F2=\"Travel\""] }) });
     props.delete("layout");
-    const before = [sheets.get("Summary"), sheets.get("Trends")];
+    const before = [sheets.get("Dashboard"), sheets.get("Trends")];
     sync();
-    expect(sheets.get("Summary")).not.toBe(before[0]);
+    expect(sheets.get("Dashboard")).not.toBe(before[0]);
     expect(sheets.get("Trends")).not.toBe(before[1]);
-    expect(sheets.get("Transactions")!.rules).toHaveLength(4);
+    expect(tx.rules).toHaveLength(3);
     sync();
-    expect(sheets.get("Transactions")!.rules).toHaveLength(4);
+    expect(tx.rules).toHaveLength(3);
   });
 
   it("learns a category from an edit and fills in the same merchant", () => {
@@ -543,5 +557,74 @@ describe("recurring payments and generic statement lines", () => {
     props.delete("cursor");
     sync();
     expect(tx.cells.slice(1).map((x) => [x[1], x[5], x[9]])).toEqual([["JANE TAN", "Own transfers", "both"]]);
+  });
+});
+
+describe("start date, money in, and review", () => {
+  const stmtRow = (date: string, merchant: string, amount: number, direction: string, category: string, extra: Record<number, unknown> = {}) => {
+    const r: unknown[] = [];
+    r[0] = new Date(`${date}T00:00:00+08:00`);
+    r[1] = merchant;
+    r[2] = amount;
+    r[4] = direction;
+    r[5] = category;
+    r[6] = "OCBC FRANK Account (-000001)";
+    r[7] = "paynow";
+    r[8] = "";
+    r[9] = "statement";
+    r[11] = merchant.toUpperCase();
+    Object.assign(r, extra);
+    return r;
+  };
+
+  it("drops payments before the start date and doesn't add them again", () => {
+    setup();
+    const tx = sheets.get("Transactions")!;
+    tx.cells.push(stmtRow("2026-01-05", "NEW STALL", 5, "out", "Food & Drinks"), stmtRow("2025-12-20", "OLD STALL", 4, "out", "Food & Drinks"));
+    sheets.get("Settings")!.getRange(6, 2).setValue("2026-01-01");
+    inbox.push({ id: "z", at: "2025-12-19T06:46:00Z", from: "Notifications@ocbc.com", text: paynow("OLDER STALL PTE LTD", "4.50", "9").replace("19 Sep 2026", "19 Dec 2025") });
+    props.delete("cursor");
+    sync();
+    expect(tx.cells.slice(1).map((r) => r[1])).toEqual(["NEW STALL"]);
+  });
+
+  it("sorts old money in again: allowance, paid back, and a failed transfer returned", () => {
+    setup();
+    const tx = sheets.get("Transactions")!;
+    sheets.get("Settings")!.getRange(7, 2).setValue("TAN AH KOW");
+    tx.cells.push(
+      stmtRow("2026-08-21", "JANE TAN", 50, "out", "Transfers"),
+      stmtRow("2026-08-22", "JANE TAN", 50, "in", "Income"),
+      stmtRow("2026-08-23", "TAN AH KOW", 600, "in", "Income"),
+      stmtRow("2026-08-24", "JOHN LIM", 12, "in", "Income"),
+      stmtRow("2026-08-25", "JOHN LIM", 8.62, "out", "Gifts", { 8: "Deepavali e-Packet" }),
+    );
+    props.delete("layout");
+    sync();
+    const cat = (m: string, dir: string) => tx.cells.find((r) => r[1] === m && r[4] === dir)![5];
+    expect(cat("JANE TAN", "in")).toBe("Refunds");
+    expect(cat("TAN AH KOW", "in")).toBe("Allowance");
+    expect(cat("JOHN LIM", "in")).toBe("Paid back");
+    expect(cat("JOHN LIM", "out")).toBe("Transfers");
+
+    // A regular sender becomes allowance even without being named in Settings
+    tx.cells.push(...["05", "06", "07"].map((m) => stmtRow(`2026-${m}-02`, "MARY ONG", 300, "in", "Income")));
+    props.delete("layout");
+    sync();
+    expect(tx.cells.filter((r) => r[1] === "MARY ONG").map((r) => r[5])).toEqual(["Allowance", "Allowance", "Allowance"]);
+  });
+
+  it("a category chosen on the Review tab applies to every payment to that merchant", () => {
+    setup();
+    const tx = sheets.get("Transactions")!;
+    tx.cells.push(stmtRow("2026-08-21", "LIU STALL", 5, "out", "Uncategorised"), stmtRow("2026-08-22", "LIU STALL", 6, "out", "Shopping"));
+    props.delete("layout");
+    sync();
+    const review = sheets.get("Review")!;
+    const row = review.cells.findIndex((r) => r[0] === "LIU STALL") + 1;
+    review.getRange(row, 2).setValue("Food & Drinks");
+    onEdit({ range: review.getRange(row, 2), value: "Food & Drinks" } as never);
+    expect(tx.cells.filter((r) => r[1] === "LIU STALL").map((r) => r[5])).toEqual(["Food & Drinks", "Food & Drinks"]);
+    expect(sheets.get("Rules")!.cells.find((r) => r[0] === "LIU STALL")!.slice(1, 3)).toEqual(["Food & Drinks", "you"]);
   });
 });
